@@ -1,0 +1,8 @@
+# Core runtime dependencies for the Raspberry Pi waste sorter
+opencv-python
+Pillow
+PyYAML
+torch
+torchvision
+# Hardware specific packages
+RPi.GPIO; platform_system == "Linux"
