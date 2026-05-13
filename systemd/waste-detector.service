@@ -1,0 +1,31 @@
+[Unit]
+Description=Plastic Waste Detection – Real-time Web UI
+# Wait for the network interface to get an IP before starting
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=REPO_DIR_PLACEHOLDER
+# Wait until an IP address is actually assigned (handles WiFi slow-connect)
+ExecStartPre=/bin/bash -c '\
+  for i in $(seq 1 30); do \
+    ip=$(hostname -I 2>/dev/null | awk "{print \$1}"); \
+    [ -n "$ip" ] && exit 0; \
+    sleep 2; \
+  done; \
+  echo "No network after 60s, starting anyway"; exit 0'
+ExecStart=/usr/bin/authbind --deep /usr/bin/python3 REPO_DIR_PLACEHOLDER/app.py \
+    --host 0.0.0.0 \
+    --port 80 \
+    --size 320 \
+    --conf 0.40 \
+    --source 0
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

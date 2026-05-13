@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Plastic Waste Detector</title>
+  <style>
+    /* ── Reset & base ──────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #0f1117;
+      --surface:  #1a1d27;
+      --surface2: #22263a;
+      --border:   #2e3350;
+      --accent:   #4f8ef7;
+      --green:    #22c55e;
+      --red:      #ef4444;
+      --amber:    #f59e0b;
+      --text:     #e2e8f0;
+      --muted:    #64748b;
+      --radius:   10px;
+    }
+
+    html, body {
+      height: 100%;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    /* ── Layout ──────────────────────────────────────────────────────── */
+    .shell {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* ── Header ──────────────────────────────────────────────────────── */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 20px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .logo-icon {
+      width: 36px; height: 36px;
+      background: var(--accent);
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px;
+    }
+
+    .header h1 {
+      font-size: 1.1rem;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+    }
+
+    .header p {
+      font-size: 0.75rem;
+      color: var(--muted);
+      margin-top: 1px;
+    }
+
+    .status-badge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      padding: 5px 12px;
+      border-radius: 20px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      letter-spacing: 0.05em;
+    }
+
+    .status-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--amber);
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+    .status-dot.live { background: var(--green); animation: pulse-green 1.5s ease-in-out infinite; }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(0.85); }
+    }
+    @keyframes pulse-green {
+      0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(34,197,94,0.4); }
+      50% { box-shadow: 0 0 0 5px rgba(34,197,94,0); }
+    }
+
+    /* ── Main content ─────────────────────────────────────────────────── */
+    .content {
+      display: grid;
+      grid-template-columns: 1fr 320px;
+      gap: 0;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    /* ── Video panel ──────────────────────────────────────────────────── */
+    .video-panel {
+      display: flex;
+      flex-direction: column;
+      padding: 16px;
+      gap: 10px;
+      background: var(--bg);
+    }
+
+    .video-wrap {
+      flex: 1;
+      border-radius: var(--radius);
+      overflow: hidden;
+      border: 1px solid var(--border);
+      background: #000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+    }
+
+    .video-wrap img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: block;
+    }
+
+    .video-overlay {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      align-items: flex-end;
+    }
+
+    .metric-chip {
+      background: rgba(0,0,0,0.65);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 6px;
+      padding: 4px 10px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      backdrop-filter: blur(4px);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .metric-chip span { color: var(--accent); }
+
+    /* ── Stats sidebar ────────────────────────────────────────────────── */
+    .sidebar {
+      background: var(--surface);
+      border-left: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+      gap: 0;
+    }
+
+    .sidebar::-webkit-scrollbar { width: 4px; }
+    .sidebar::-webkit-scrollbar-track { background: transparent; }
+    .sidebar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+    /* ── Sidebar section ─────────────────────────────────────────────── */
+    .section {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .section-title {
+      font-size: 0.65rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 10px;
+    }
+
+    /* ── Performance metrics ─────────────────────────────────────────── */
+    .perf-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .perf-card {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 10px 12px;
+    }
+
+    .perf-card .val {
+      font-size: 1.6rem;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      line-height: 1;
+      color: var(--accent);
+    }
+
+    .perf-card .unit {
+      font-size: 0.7rem;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+
+    /* ── Last detection highlight ────────────────────────────────────── */
+    .detection-hero {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px;
+      text-align: center;
+    }
+
+    .detection-hero .label {
+      font-size: 1.3rem;
+      font-weight: 700;
+      color: var(--text);
+      word-break: break-word;
+    }
+
+    .detection-hero .conf-bar-wrap {
+      margin-top: 8px;
+    }
+
+    .conf-bar-bg {
+      height: 6px;
+      background: var(--border);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .conf-bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--accent), var(--green));
+      border-radius: 4px;
+      transition: width 0.4s ease;
+      width: 0%;
+    }
+
+    .conf-val {
+      font-size: 0.75rem;
+      color: var(--muted);
+      margin-top: 4px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* ── Class count pills ───────────────────────────────────────────── */
+    .class-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .class-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.8rem;
+    }
+
+    .class-dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .class-name {
+      flex: 1;
+      text-transform: capitalize;
+    }
+
+    .class-count {
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      min-width: 20px;
+      text-align: right;
+      font-size: 0.85rem;
+    }
+
+    .class-bar-bg {
+      position: absolute;
+      right: 0; top: 0; bottom: 0;
+      background: rgba(79,142,247,0.08);
+      border-radius: 4px;
+      transition: width 0.4s ease;
+    }
+
+    /* ── Detection history list ──────────────────────────────────────── */
+    .history-list {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      max-height: 220px;
+      overflow-y: auto;
+    }
+
+    .history-list::-webkit-scrollbar { width: 3px; }
+    .history-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    .hist-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 8px;
+      border-radius: 6px;
+      background: var(--surface2);
+      font-size: 0.75rem;
+      border-left: 3px solid transparent;
+    }
+
+    .hist-item .hi-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .hist-item .hi-name {
+      flex: 1;
+      text-transform: capitalize;
+    }
+
+    .hist-item .hi-conf {
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* ── No detections placeholder ───────────────────────────────────── */
+    .empty-state {
+      color: var(--muted);
+      font-size: 0.78rem;
+      text-align: center;
+      padding: 12px 0;
+    }
+
+    /* ── Footer ──────────────────────────────────────────────────────── */
+    .footer {
+      padding: 8px 20px;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      font-size: 0.7rem;
+      color: var(--muted);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-shrink: 0;
+    }
+
+    .footer strong { color: var(--text); }
+
+    /* ── Responsive tweaks ───────────────────────────────────────────── */
+    @media (max-width: 768px) {
+      .content { grid-template-columns: 1fr; grid-template-rows: 1fr auto; }
+      .sidebar { border-left: none; border-top: 1px solid var(--border); max-height: 40vh; }
+      .video-panel { padding: 8px; }
+    }
+  </style>
+</head>
+<body>
+<div class="shell">
+
+  <!-- ── Header ──────────────────────────────────────────────────────── -->
+  <header class="header">
+    <div class="header-left">
+      <div class="logo-icon">♻</div>
+      <div>
+        <h1>Plastic Waste Detector</h1>
+        <p>YOLOv5s · Raspberry Pi 4</p>
+      </div>
+    </div>
+    <div class="status-badge">
+      <div class="status-dot" id="statusDot"></div>
+      <span id="statusText">CONNECTING</span>
+    </div>
+  </header>
+
+  <!-- ── Main ─────────────────────────────────────────────────────────── -->
+  <div class="content">
+
+    <!-- Live video -->
+    <div class="video-panel">
+      <div class="video-wrap">
+        <img id="stream" src="/video_feed" alt="Live camera feed" />
+        <div class="video-overlay">
+          <div class="metric-chip">FPS <span id="fpsChip">—</span></div>
+          <div class="metric-chip">Inf <span id="infChip">—</span> ms</div>
+          <div class="metric-chip">Frames <span id="frameChip">0</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stats sidebar -->
+    <aside class="sidebar">
+
+      <!-- Performance -->
+      <div class="section">
+        <div class="section-title">Performance</div>
+        <div class="perf-grid">
+          <div class="perf-card">
+            <div class="val" id="fps">—</div>
+            <div class="unit">Frames / sec</div>
+          </div>
+          <div class="perf-card">
+            <div class="val" id="inf">—</div>
+            <div class="unit">Inference ms</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Last detection -->
+      <div class="section">
+        <div class="section-title">Last Detection</div>
+        <div class="detection-hero">
+          <div class="label" id="lastLabel">Scanning…</div>
+          <div class="conf-bar-wrap">
+            <div class="conf-bar-bg">
+              <div class="conf-bar-fill" id="confBar"></div>
+            </div>
+            <div class="conf-val" id="confVal">—</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Class counts -->
+      <div class="section">
+        <div class="section-title">Detections This Frame</div>
+        <div class="class-list" id="classCounts">
+          <div class="empty-state">No objects detected</div>
+        </div>
+      </div>
+
+      <!-- Detection history -->
+      <div class="section">
+        <div class="section-title">Recent Detections</div>
+        <div class="history-list" id="historyList">
+          <div class="empty-state">Waiting for detections…</div>
+        </div>
+      </div>
+
+    </aside>
+  </div>
+
+  <!-- ── Footer ──────────────────────────────────────────────────────── -->
+  <footer class="footer">
+    <span>Plastic Waste Detection · YOLOv5s</span>
+    <span id="footerTime">—</span>
+  </footer>
+
+</div>
+
+<script>
+  // ── Class colour palette (matches Python BGR palette order) ────────────
+  const CLASS_COLORS = [
+    '#22c55e', // cable
+    '#4f8ef7', // plastic bottle
+    '#ef4444', // soap bottle
+    '#f59e0b', // sterofoam
+    '#a855f7', // plastic bag
+    '#06b6d4', // plastic cup
+  ];
+
+  const allClasses = {{ classes | tojson }};
+
+  // Map class name -> colour (order matches classes.txt)
+  function colorForClass(name) {
+    const idx = allClasses.indexOf(name);
+    return idx >= 0 ? CLASS_COLORS[idx % CLASS_COLORS.length] : '#94a3b8';
+  }
+
+  // ── History ring buffer ─────────────────────────────────────────────────
+  const HISTORY_MAX = 30;
+  const history = [];
+
+  // ── DOM refs ────────────────────────────────────────────────────────────
+  const $ = id => document.getElementById(id);
+  const fpsEl       = $('fps');
+  const infEl       = $('inf');
+  const fpsChip     = $('fpsChip');
+  const infChip     = $('infChip');
+  const frameChip   = $('frameChip');
+  const lastLabel   = $('lastLabel');
+  const confBar     = $('confBar');
+  const confVal     = $('confVal');
+  const classCounts = $('classCounts');
+  const histList    = $('historyList');
+  const statusDot   = $('statusDot');
+  const statusText  = $('statusText');
+  const footerTime  = $('footerTime');
+
+  let prevFrameCount = 0;
+
+  // ── Polling /api/stats ──────────────────────────────────────────────────
+  async function fetchStats() {
+    try {
+      const res = await fetch('/api/stats');
+      if (!res.ok) throw new Error('bad response');
+      const d = await res.json();
+
+      // ── Status indicator ───────────────────────────────────────────────
+      if (d.camera_ok) {
+        statusDot.className = 'status-dot live';
+        statusText.textContent = 'LIVE';
+      }
+
+      // ── Performance ───────────────────────────────────────────────────
+      fpsEl.textContent     = d.fps;
+      infEl.textContent     = d.inference_ms;
+      fpsChip.textContent   = d.fps;
+      infChip.textContent   = d.inference_ms;
+      frameChip.textContent = d.frame_count;
+
+      // ── Last detection ────────────────────────────────────────────────
+      lastLabel.textContent    = d.last_label;
+      lastLabel.style.color    = d.last_label !== '—' ? colorForClass(d.last_label) : '';
+      const pct = Math.round(d.last_conf * 100);
+      confBar.style.width      = pct + '%';
+      confVal.textContent      = d.last_conf > 0 ? (pct + '% confidence') : '—';
+
+      // ── Per-class counts ──────────────────────────────────────────────
+      const counts = d.counts;
+      const keys = Object.keys(counts);
+      if (keys.length === 0) {
+        classCounts.innerHTML = '<div class="empty-state">No objects detected</div>';
+      } else {
+        const maxCount = Math.max(...Object.values(counts), 1);
+        classCounts.innerHTML = keys.map(name => {
+          const c  = counts[name];
+          const cl = colorForClass(name);
+          const w  = Math.round((c / maxCount) * 100);
+          return `
+            <div class="class-row">
+              <span class="class-dot" style="background:${cl}"></span>
+              <span class="class-name">${name}</span>
+              <span class="class-count" style="color:${cl}">${c}</span>
+            </div>`;
+        }).join('');
+      }
+
+      // ── History update ────────────────────────────────────────────────
+      if (d.frame_count !== prevFrameCount && d.detections.length > 0) {
+        prevFrameCount = d.frame_count;
+        d.detections.forEach(det => {
+          history.unshift(det);
+        });
+        if (history.length > HISTORY_MAX) history.length = HISTORY_MAX;
+        renderHistory();
+      }
+
+      // ── Footer time ───────────────────────────────────────────────────
+      footerTime.textContent = new Date().toLocaleTimeString();
+
+    } catch (_) {
+      statusDot.className = 'status-dot';
+      statusText.textContent = 'OFFLINE';
+    }
+  }
+
+  function renderHistory() {
+    if (history.length === 0) {
+      histList.innerHTML = '<div class="empty-state">Waiting for detections…</div>';
+      return;
+    }
+    histList.innerHTML = history.slice(0, 20).map(d => {
+      const cl  = colorForClass(d.label);
+      const pct = Math.round(d.confidence * 100);
+      return `
+        <div class="hist-item" style="border-left-color:${cl}">
+          <span class="hi-dot" style="background:${cl}"></span>
+          <span class="hi-name">${d.label}</span>
+          <span class="hi-conf">${pct}%</span>
+        </div>`;
+    }).join('');
+  }
+
+  // Poll every 500 ms
+  fetchStats();
+  setInterval(fetchStats, 500);
+
+  // Reconnect stream on error
+  const streamImg = $('stream');
+  streamImg.onerror = () => {
+    setTimeout(() => { streamImg.src = '/video_feed?' + Date.now(); }, 2000);
+  };
+</script>
+</body>
+</html>

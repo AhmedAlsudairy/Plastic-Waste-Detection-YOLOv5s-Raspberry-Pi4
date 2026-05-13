@@ -4,5 +4,6 @@ Pillow
 PyYAML
 torch
 torchvision
+flask>=2.3
 # Hardware specific packages
 RPi.GPIO; platform_system == "Linux"
