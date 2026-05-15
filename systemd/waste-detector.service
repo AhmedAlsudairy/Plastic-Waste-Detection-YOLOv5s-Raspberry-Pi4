@@ -7,7 +7,7 @@ Requires=wifi-provision.service
 
 [Service]
 Type=simple
-User=pi
+User=ahmed
 WorkingDirectory=REPO_DIR_PLACEHOLDER
 # Wait until an IP address is actually assigned (handles WiFi slow-connect)
 ExecStartPre=/bin/bash -c '\

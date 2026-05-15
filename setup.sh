@@ -30,14 +30,15 @@ echo "▶ [1/5] Installing system packages …"
 sudo apt-get update -qq
 sudo apt-get install -y --no-install-recommends \
     python3-pip python3-opencv \
-    libopenblas-dev libatlas-base-dev \
+    libopenblas-dev \
     libjpeg-dev libopenjp2-7 \
     authbind dnsmasq-base \
     2>&1 | tail -5
 
-# Allow the 'pi' user to bind port 80 without root (for detector UI)
+# Allow the current user to bind port 80 without root (for detector UI)
+DETECTOR_USER="${SUDO_USER:-$(whoami)}"
 sudo touch /etc/authbind/byport/80
-sudo chown pi /etc/authbind/byport/80
+sudo chown "$DETECTOR_USER" /etc/authbind/byport/80
 sudo chmod 500 /etc/authbind/byport/80
 
 # ── Step 2 · Python packages ──────────────────────────────────────────────
