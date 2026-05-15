@@ -1,0 +1,20 @@
+[Unit]
+Description=WiFi Provisioning Portal
+# Must finish BEFORE the detector starts
+Before=waste-detector.service
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=root
+WorkingDirectory=REPO_DIR_PLACEHOLDER
+ExecStart=/usr/bin/python3 REPO_DIR_PLACEHOLDER/wifi_setup.py
+# Allow up to 5 minutes for the user to complete WiFi setup
+TimeoutStartSec=300
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

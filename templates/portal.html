@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Connect to WiFi – Waste Detector</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:      #0f1117;
+      --surface: #1a1d27;
+      --s2:      #22263a;
+      --border:  #2e3350;
+      --accent:  #4f8ef7;
+      --green:   #22c55e;
+      --red:     #ef4444;
+      --amber:   #f59e0b;
+      --text:    #e2e8f0;
+      --muted:   #64748b;
+      --r:       12px;
+    }
+
+    body {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      padding: 20px;
+    }
+
+    .card {
+      width: 100%;
+      max-width: 440px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--r);
+      overflow: hidden;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+    }
+
+    /* ── Header ── */
+    .card-head {
+      padding: 24px 24px 20px;
+      background: linear-gradient(135deg, #1e2540 0%, #161926 100%);
+      border-bottom: 1px solid var(--border);
+      text-align: center;
+    }
+
+    .logo { font-size: 2.4rem; margin-bottom: 8px; }
+
+    .card-head h1 { font-size: 1.2rem; font-weight: 700; }
+    .card-head p  { font-size: 0.78rem; color: var(--muted); margin-top: 4px; }
+
+    /* ── Step indicator ── */
+    .steps {
+      display: flex;
+      align-items: center;
+      padding: 16px 24px;
+      gap: 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .step {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      flex: 1;
+    }
+
+    .step-dot {
+      width: 28px; height: 28px;
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 0.75rem; font-weight: 700;
+      background: var(--s2);
+      border: 2px solid var(--border);
+      color: var(--muted);
+      transition: all 0.3s;
+    }
+    .step.active  .step-dot { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .step.done    .step-dot { background: var(--green);  border-color: var(--green);  color: #fff; }
+
+    .step-label { font-size: 0.65rem; color: var(--muted); text-align: center; }
+    .step.active .step-label { color: var(--text); }
+
+    .step-line { flex: 1; height: 2px; background: var(--border); }
+    .step-line.done { background: var(--green); }
+
+    /* ── Body ── */
+    .card-body { padding: 22px 24px; }
+
+    /* ── Screen containers ── */
+    .screen { display: none; }
+    .screen.visible { display: block; }
+
+    /* ── Network list ── */
+    .net-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; max-height: 280px; overflow-y: auto; }
+    .net-list::-webkit-scrollbar { width: 4px; }
+    .net-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+    .net-item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: 2px solid var(--border);
+      cursor: pointer;
+      transition: all 0.15s;
+      background: var(--s2);
+    }
+    .net-item:hover  { border-color: var(--accent); background: #1e2745; }
+    .net-item.picked { border-color: var(--accent); background: #1e2745; }
+
+    .net-icon { font-size: 1.2rem; flex-shrink: 0; }
+
+    .net-info { flex: 1; }
+    .net-name { font-size: 0.88rem; font-weight: 600; }
+    .net-sub  { font-size: 0.7rem; color: var(--muted); margin-top: 1px; }
+
+    .signal-bars {
+      display: flex; align-items: flex-end; gap: 2px; height: 16px; flex-shrink: 0;
+    }
+    .bar {
+      width: 4px; border-radius: 1px;
+      background: var(--border);
+    }
+    .bar.lit { background: var(--green); }
+    .bar:nth-child(1) { height: 4px; }
+    .bar:nth-child(2) { height: 7px; }
+    .bar:nth-child(3) { height: 11px; }
+    .bar:nth-child(4) { height: 16px; }
+
+    /* ── Manual input ── */
+    .divider {
+      display: flex; align-items: center; gap: 10px;
+      font-size: 0.7rem; color: var(--muted); margin-bottom: 12px;
+    }
+    .divider::before, .divider::after {
+      content: ''; flex: 1; height: 1px; background: var(--border);
+    }
+
+    /* ── Form ── */
+    label {
+      display: block;
+      font-size: 0.75rem; font-weight: 600;
+      color: var(--muted); margin-bottom: 6px; margin-top: 14px;
+      text-transform: uppercase; letter-spacing: 0.06em;
+    }
+    label:first-child { margin-top: 0; }
+
+    input[type=text], input[type=password] {
+      width: 100%;
+      padding: 10px 12px;
+      background: var(--s2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 0.9rem;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    input:focus { border-color: var(--accent); }
+
+    .pw-wrap { position: relative; }
+    .pw-toggle {
+      position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+      cursor: pointer; font-size: 1.1rem; background: none; border: none;
+      color: var(--muted); padding: 0; line-height: 1;
+    }
+    .pw-wrap input { padding-right: 38px; }
+
+    /* ── Buttons ── */
+    .btn {
+      width: 100%; padding: 12px;
+      border-radius: 8px; border: none;
+      font-size: 0.95rem; font-weight: 600;
+      cursor: pointer; transition: opacity 0.15s, transform 0.1s;
+      margin-top: 16px;
+    }
+    .btn:active { transform: scale(0.98); }
+
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover { opacity: 0.9; }
+    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .btn-ghost {
+      background: var(--s2); color: var(--muted);
+      border: 1px solid var(--border);
+      margin-top: 8px;
+    }
+    .btn-ghost:hover { color: var(--text); border-color: var(--muted); }
+
+    /* ── Alert ── */
+    .alert {
+      padding: 10px 12px; border-radius: 8px;
+      font-size: 0.8rem; margin-top: 12px;
+      display: none;
+    }
+    .alert.error   { background: rgba(239,68,68,0.15); border: 1px solid rgba(239,68,68,0.4); color: #fca5a5; display: block; }
+    .alert.success { background: rgba(34,197,94,0.15); border: 1px solid rgba(34,197,94,0.4); color: #86efac;  display: block; }
+    .alert.info    { background: rgba(79,142,247,0.12); border: 1px solid rgba(79,142,247,0.35); color: #93c5fd; display: block; }
+
+    /* ── Connecting animation ── */
+    .spinner {
+      width: 52px; height: 52px;
+      border: 4px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 20px auto;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .connecting-text {
+      text-align: center;
+      font-size: 1rem; font-weight: 600;
+      margin-bottom: 8px;
+    }
+    .connecting-sub {
+      text-align: center;
+      font-size: 0.8rem; color: var(--muted);
+      line-height: 1.5;
+    }
+
+    .countdown-box {
+      margin-top: 20px;
+      padding: 14px;
+      background: var(--s2); border-radius: 8px;
+      border: 1px solid var(--border);
+      text-align: center;
+      font-size: 0.82rem;
+    }
+    .countdown-box .big-url {
+      font-size: 1rem; font-weight: 700;
+      color: var(--accent); margin-top: 6px; word-break: break-all;
+    }
+    .countdown-num {
+      font-size: 2rem; font-weight: 700;
+      color: var(--amber); display: block; margin: 8px 0;
+    }
+
+    /* ── Success screen ── */
+    .success-icon {
+      font-size: 3rem; text-align: center;
+      margin: 16px 0 8px;
+    }
+    .success-title {
+      text-align: center; font-size: 1.2rem;
+      font-weight: 700; color: var(--green);
+    }
+    .success-sub {
+      text-align: center; font-size: 0.82rem;
+      color: var(--muted); margin-top: 6px; line-height: 1.5;
+    }
+    .ip-pill {
+      display: inline-block;
+      padding: 6px 16px;
+      background: var(--s2); border: 1px solid var(--green);
+      border-radius: 20px; color: var(--green);
+      font-weight: 700; font-size: 1rem;
+      margin: 14px auto; display: block; text-align: center;
+    }
+  </style>
+</head>
+<body>
+<div class="card">
+
+  <!-- Header -->
+  <div class="card-head">
+    <div class="logo">♻</div>
+    <h1>Plastic Waste Detector</h1>
+    <p>Connect your Raspberry Pi to WiFi</p>
+  </div>
+
+  <!-- Step indicator -->
+  <div class="steps" id="stepBar">
+    <div class="step active" id="s1"><div class="step-dot">1</div><div class="step-label">Select WiFi</div></div>
+    <div class="step-line" id="l1"></div>
+    <div class="step" id="s2"><div class="step-dot">2</div><div class="step-label">Password</div></div>
+    <div class="step-line" id="l2"></div>
+    <div class="step" id="s3"><div class="step-dot">3</div><div class="step-label">Connecting</div></div>
+  </div>
+
+  <div class="card-body">
+
+    <!-- ── Screen 1: Pick network ───────────────────────────── -->
+    <div class="screen visible" id="screen1">
+      <div class="net-list" id="netList">
+        {% if networks %}
+          {% for net in networks %}
+          <div class="net-item" data-ssid="{{ net.ssid }}" data-secure="{{ net.secure | lower }}" onclick="pickNet(this)">
+            <div class="net-icon">{% if net.secure %}🔒{% else %}📶{% endif %}</div>
+            <div class="net-info">
+              <div class="net-name">{{ net.ssid }}</div>
+              <div class="net-sub">{% if net.secure %}Secured{% else %}Open{% endif %} · Signal {{ net.signal }}%</div>
+            </div>
+            <div class="signal-bars">
+              <div class="bar {% if net.signal >= 20 %}lit{% endif %}"></div>
+              <div class="bar {% if net.signal >= 40 %}lit{% endif %}"></div>
+              <div class="bar {% if net.signal >= 65 %}lit{% endif %}"></div>
+              <div class="bar {% if net.signal >= 80 %}lit{% endif %}"></div>
+            </div>
+          </div>
+          {% endfor %}
+        {% else %}
+          <div style="text-align:center;color:var(--muted);padding:20px 0;font-size:0.85rem;">
+            No networks found.<br>Enter manually below.
+          </div>
+        {% endif %}
+      </div>
+
+      <div class="divider">or enter manually</div>
+
+      <label>Network name (SSID)</label>
+      <input type="text" id="manualSSID" placeholder="Your WiFi name…" />
+
+      <button class="btn btn-primary" onclick="goToPassword()">Next →</button>
+    </div>
+
+    <!-- ── Screen 2: Password ───────────────────────────────── -->
+    <div class="screen" id="screen2">
+      <div style="font-size:0.85rem;margin-bottom:14px;color:var(--muted);">
+        Connecting to: <strong id="selectedDisplay" style="color:var(--text)"></strong>
+      </div>
+
+      <label>WiFi Password</label>
+      <div class="pw-wrap">
+        <input type="password" id="pwInput" placeholder="Leave blank if open network" />
+        <button class="pw-toggle" type="button" onclick="togglePw()" title="Show/hide">👁</button>
+      </div>
+
+      <div id="alert2" class="alert"></div>
+
+      <button class="btn btn-primary" id="connectBtn" onclick="doConnect()">Connect</button>
+      <button class="btn btn-ghost" onclick="goBack()">← Back</button>
+    </div>
+
+    <!-- ── Screen 3: Connecting ─────────────────────────────── -->
+    <div class="screen" id="screen3">
+      <div class="spinner" id="spinner"></div>
+      <div class="connecting-text" id="connTitle">Connecting…</div>
+      <div class="connecting-sub" id="connSub">
+        Please wait while the Pi connects to your network.<br>
+        This takes up to 30 seconds.
+      </div>
+
+      <div class="countdown-box" id="countdownBox" style="display:none">
+        Reconnect your device to <strong id="homeSsidLabel"></strong><br>
+        then open:<br>
+        <div class="big-url" id="piUrlLabel"></div>
+        <span class="countdown-num" id="countdown">15</span>
+        seconds, then the page will try to redirect…
+      </div>
+
+      <div id="alert3" class="alert"></div>
+    </div>
+
+    <!-- ── Screen 4: Done ───────────────────────────────────── -->
+    <div class="screen" id="screen4">
+      <div class="success-icon">✅</div>
+      <div class="success-title">Connected!</div>
+      <div class="success-sub">Your Pi is now on your WiFi network.</div>
+      <div class="ip-pill" id="finalIp"></div>
+      <div class="success-sub">
+        The waste detector is starting…<br>
+        Open the URL above in your browser.
+      </div>
+      <button class="btn btn-primary" id="openBtn" onclick="openDetector()">Open Detector →</button>
+    </div>
+
+  </div>
+</div>
+
+<script>
+  let selectedSSID = '';
+  let selectedSecure = true;
+  let pollTimer = null;
+  let countdownTimer = null;
+  let targetUrl = '';
+
+  // ── Helpers ──────────────────────────────────────────────────────────────
+  function show(id) {
+    ['screen1','screen2','screen3','screen4'].forEach(s => {
+      document.getElementById(s).classList.toggle('visible', s === id);
+    });
+  }
+
+  function setStep(n) {
+    for (let i = 1; i <= 3; i++) {
+      const s = document.getElementById('s' + i);
+      s.className = 'step' + (i < n ? ' done' : i === n ? ' active' : '');
+      if (i < n) s.querySelector('.step-dot').textContent = '✓';
+      else s.querySelector('.step-dot').textContent = String(i);
+    }
+    for (let i = 1; i <= 2; i++) {
+      document.getElementById('l' + i).className = 'step-line' + (i < n ? ' done' : '');
+    }
+  }
+
+  function showAlert(id, type, msg) {
+    const el = document.getElementById(id);
+    el.className = 'alert ' + type;
+    el.textContent = msg;
+  }
+
+  // ── Screen 1 ─────────────────────────────────────────────────────────────
+  function pickNet(el) {
+    document.querySelectorAll('.net-item').forEach(e => e.classList.remove('picked'));
+    el.classList.add('picked');
+    selectedSSID = el.dataset.ssid;
+    selectedSecure = el.dataset.secure !== 'false';
+    document.getElementById('manualSSID').value = '';
+  }
+
+  function goToPassword() {
+    const manual = document.getElementById('manualSSID').value.trim();
+    if (manual) { selectedSSID = manual; selectedSecure = true; }
+    if (!selectedSSID) {
+      alert('Please select a network or type one.');
+      return;
+    }
+    document.getElementById('selectedDisplay').textContent = selectedSSID;
+    document.getElementById('pwInput').value = '';
+    document.getElementById('alert2').className = 'alert';
+    document.getElementById('alert2').textContent = '';
+    setStep(2);
+    show('screen2');
+  }
+
+  function goBack() {
+    setStep(1);
+    show('screen1');
+  }
+
+  // ── Screen 2 ─────────────────────────────────────────────────────────────
+  function togglePw() {
+    const f = document.getElementById('pwInput');
+    f.type = f.type === 'password' ? 'text' : 'password';
+  }
+
+  async function doConnect() {
+    const pw = document.getElementById('pwInput').value;
+    document.getElementById('connectBtn').disabled = true;
+    document.getElementById('alert2').className = 'alert';
+
+    const res = await fetch('/api/connect', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ssid: selectedSSID, password: pw})
+    }).catch(() => null);
+
+    if (!res || !res.ok) {
+      showAlert('alert2', 'error', 'Connection request failed. Try again.');
+      document.getElementById('connectBtn').disabled = false;
+      return;
+    }
+
+    setStep(3);
+    show('screen3');
+    pollStatus();
+  }
+
+  // ── Screen 3 ─────────────────────────────────────────────────────────────
+  function pollStatus() {
+    pollTimer = setInterval(async () => {
+      let data;
+      try {
+        const r = await fetch('/api/status');
+        data = await r.json();
+      } catch (_) {
+        // Connection dropped = Pi is connecting — treat as in-progress
+        return;
+      }
+
+      if (data.status === 'connected') {
+        clearInterval(pollTimer);
+        onConnected(data.ip);
+      } else if (data.status === 'error') {
+        clearInterval(pollTimer);
+        onError(data.error);
+      }
+    }, 2000);
+
+    // After 12s with no response, assume connecting (hotspot is down)
+    setTimeout(() => {
+      clearInterval(pollTimer);
+      document.getElementById('connTitle').textContent = 'Almost there…';
+      document.getElementById('connSub').textContent =
+        'The hotspot closed — the Pi is connecting to your network.';
+      startCountdown(selectedSSID);
+    }, 12000);
+  }
+
+  function onConnected(ip) {
+    const url = ip ? `http://${ip}` : `http://raspberrypi.local`;
+    targetUrl = url;
+    document.getElementById('finalIp').textContent = url;
+    document.getElementById('openBtn').href = url;
+    setStep(3); // keep step 3 active (close enough)
+    // Step 3 dot → done
+    const s3 = document.getElementById('s3');
+    s3.className = 'step done';
+    s3.querySelector('.step-dot').textContent = '✓';
+    show('screen4');
+  }
+
+  function onError(msg) {
+    document.getElementById('spinner').style.display = 'none';
+    document.getElementById('connTitle').textContent = 'Failed';
+    showAlert('alert3', 'error', msg + ' Hotspot restarting — please reconnect.');
+    document.getElementById('connectBtn').disabled = false;
+    // Allow going back after 5s
+    setTimeout(() => {
+      setStep(2);
+      show('screen2');
+      showAlert('alert2', 'error', msg);
+    }, 5000);
+  }
+
+  function startCountdown(ssid) {
+    const box = document.getElementById('countdownBox');
+    box.style.display = 'block';
+    document.getElementById('homeSsidLabel').textContent = ssid;
+    const guessUrl = 'http://raspberrypi.local';
+    targetUrl = guessUrl;
+    document.getElementById('piUrlLabel').textContent = guessUrl;
+
+    let n = 15;
+    document.getElementById('countdown').textContent = n;
+    countdownTimer = setInterval(() => {
+      n--;
+      document.getElementById('countdown').textContent = n;
+      if (n <= 0) {
+        clearInterval(countdownTimer);
+        window.location.href = guessUrl;
+      }
+    }, 1000);
+  }
+
+  // ── Screen 4 ─────────────────────────────────────────────────────────────
+  function openDetector() {
+    window.location.href = targetUrl || 'http://raspberrypi.local';
+  }
+</script>
+</body>
+</html>

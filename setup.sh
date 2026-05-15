@@ -3,10 +3,12 @@
 #  setup.sh — Run ONCE on your Raspberry Pi, then forget it.
 #
 #  What this does:
-#    1. Installs all Python packages
-#    2. Makes the detector start automatically on every boot
-#    3. Makes it wait for WiFi before starting
-#    4. Prints your access URL when done
+#    1. Installs all Python + system packages
+#    2. On first boot (no WiFi saved): opens a hotspot called
+#       "WasteDetector" — connect your phone, pick your WiFi,
+#       enter password once. Done forever.
+#    3. On every boot after that: auto-starts the detector.
+#    4. No port number needed — just type the Pi's IP.
 #
 #  Usage:
 #    chmod +x setup.sh
@@ -15,8 +17,8 @@
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SERVICE="waste-detector"
-SERVICE_FILE="/etc/systemd/system/$SERVICE.service"
+PROVISION_SERVICE="wifi-provision"
+DETECTOR_SERVICE="waste-detector"
 
 echo ""
 echo "  ♻  Plastic Waste Detector – One-time Setup"
@@ -24,59 +26,72 @@ echo "  ────────────────────────
 echo ""
 
 # ── Step 1 · System packages ──────────────────────────────────────────────
-echo "▶ [1/4] Installing system packages …"
+echo "▶ [1/5] Installing system packages …"
 sudo apt-get update -qq
 sudo apt-get install -y --no-install-recommends \
     python3-pip python3-opencv \
     libopenblas-dev libatlas-base-dev \
     libjpeg-dev libopenjp2-7 \
-    authbind \
+    authbind dnsmasq-base \
     2>&1 | tail -5
 
-# Allow the 'pi' user to bind port 80 without root
+# Allow the 'pi' user to bind port 80 without root (for detector UI)
 sudo touch /etc/authbind/byport/80
 sudo chown pi /etc/authbind/byport/80
 sudo chmod 500 /etc/authbind/byport/80
 
 # ── Step 2 · Python packages ──────────────────────────────────────────────
-echo "▶ [2/4] Installing Python packages …"
+echo "▶ [2/5] Installing Python packages …"
 pip3 install --upgrade pip -q
 pip3 install -r "$REPO_DIR/requirements.txt" -q
 echo "      Done."
 
-# ── Step 3 · Enable network-online.target (makes WiFi-wait work) ──────────
-echo "▶ [3/4] Enabling network wait service …"
-# Works for both NetworkManager (Bookworm) and dhcpcd (Bullseye)
+# ── Step 3 · NetworkManager – make sure wlan0 is managed ─────────────────
+echo "▶ [3/5] Configuring NetworkManager …"
+sudo systemctl enable NetworkManager 2>/dev/null || true
+sudo systemctl start  NetworkManager 2>/dev/null || true
+sudo nmcli device set wlan0 managed yes 2>/dev/null || true
 sudo systemctl enable NetworkManager-wait-online.service 2>/dev/null || true
-sudo systemctl enable systemd-networkd-wait-online.service 2>/dev/null || true
 
-# ── Step 4 · Install & enable the systemd service ─────────────────────────
-echo "▶ [4/4] Setting up auto-start service …"
-# Patch the placeholder path to the real project directory
+# ── Step 4 · WiFi provisioning service ───────────────────────────────────
+echo "▶ [4/5] Installing WiFi provisioning service …"
 sed "s|REPO_DIR_PLACEHOLDER|$REPO_DIR|g" \
-    "$REPO_DIR/systemd/$SERVICE.service" \
-    | sudo tee "$SERVICE_FILE" > /dev/null
+    "$REPO_DIR/systemd/$PROVISION_SERVICE.service" \
+    | sudo tee "/etc/systemd/system/$PROVISION_SERVICE.service" > /dev/null
+
+# ── Step 5 · Detector service ─────────────────────────────────────────────
+echo "▶ [5/5] Installing detector auto-start service …"
+sed "s|REPO_DIR_PLACEHOLDER|$REPO_DIR|g" \
+    "$REPO_DIR/systemd/$DETECTOR_SERVICE.service" \
+    | sudo tee "/etc/systemd/system/$DETECTOR_SERVICE.service" > /dev/null
 
 sudo systemctl daemon-reload
-sudo systemctl enable "$SERVICE"
-sudo systemctl restart "$SERVICE"
+sudo systemctl enable "$PROVISION_SERVICE"
+sudo systemctl enable "$DETECTOR_SERVICE"
 
 # ── Done ──────────────────────────────────────────────────────────────────
 echo ""
 PI_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
-echo "  ✅  Setup complete!"
+echo "  ✅  Setup complete! Reboot the Pi now:"
 echo ""
-echo "  ┌─────────────────────────────────────────────┐"
-echo "  │  Open this in any browser on your network:  │"
-echo "  │                                              │"
-printf "  │    http://%-34s │\n" "$PI_IP"
-echo "  │                                              │"
-echo "  │  No port number needed — just the IP.        │"
-echo "  │  Starts automatically on every WiFi connect. │"
-echo "  └─────────────────────────────────────────────┘"
+echo "    sudo reboot"
 echo ""
-echo "  Useful commands (if you ever need them):"
-echo "    sudo systemctl status  $SERVICE"
-echo "    sudo systemctl restart $SERVICE"
+echo "  ┌──────────────────────────────────────────────────────────┐"
+echo "  │  FIRST BOOT (no WiFi saved yet):                         │"
+echo "  │    1. Connect your phone to WiFi: 'WasteDetector'        │"
+echo "  │       Password: setup1234                                 │"
+echo "  │    2. Open any browser — setup page opens automatically  │"
+echo "  │    3. Pick your home WiFi, enter password, done!         │"
+echo "  │                                                          │"
+echo "  │  EVERY BOOT AFTER THAT:                                  │"
+printf "  │    Open  http://%-41s│\n" "$PI_IP  "
+echo "  │    (or http://raspberrypi.local)                         │"
+echo "  └──────────────────────────────────────────────────────────┘"
+echo ""
+echo "  Useful commands:"
+echo "    sudo systemctl status  $PROVISION_SERVICE"
+echo "    sudo systemctl status  $DETECTOR_SERVICE"
+echo "    sudo journalctl -u $DETECTOR_SERVICE -f    ← live logs"
+echo ""
 echo "    sudo journalctl -u $SERVICE -f    ← live logs"
 echo ""
