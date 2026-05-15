@@ -47,8 +47,9 @@ def _run(cmd: str, timeout: int = 30) -> subprocess.CompletedProcess:
 
 
 def is_connected() -> bool:
-    r = _run("nmcli -t -f CONNECTIVITY general")
-    return "full" in r.stdout.lower()
+    """Return True if wlan0 is associated with any WiFi network."""
+    r = _run(f"nmcli -t -f GENERAL.STATE device show {IFACE}")
+    return "connected" in r.stdout.lower()
 
 
 def get_hotspot_ip() -> str:

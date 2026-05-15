@@ -2,8 +2,7 @@
 Description=Plastic Waste Detection – Real-time Web UI
 # Wait for WiFi provisioning to finish first, then wait for network
 After=network-online.target wifi-provision.service
-Wants=network-online.target
-Requires=wifi-provision.service
+Wants=network-online.target wifi-provision.service
 
 [Service]
 Type=simple

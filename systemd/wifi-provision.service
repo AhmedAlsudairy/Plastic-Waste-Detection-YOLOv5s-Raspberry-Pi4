@@ -11,8 +11,8 @@ RemainAfterExit=yes
 User=root
 WorkingDirectory=REPO_DIR_PLACEHOLDER
 ExecStart=/usr/bin/python3 REPO_DIR_PLACEHOLDER/wifi_setup.py
-# Allow up to 5 minutes for the user to complete WiFi setup
-TimeoutStartSec=300
+# Allow up to 1 hour for the user to complete WiFi setup
+TimeoutStartSec=3600
 StandardOutput=journal
 StandardError=journal
 
