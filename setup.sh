@@ -43,11 +43,24 @@ sudo chmod 500 /etc/authbind/byport/80
 
 # ── Step 2 · Python packages ──────────────────────────────────────────────
 echo "▶ [2/5] Installing Python packages …"
-pip3 install -r "$REPO_DIR/requirements.txt" \
+# Install PyTorch & OpenCV via apt (avoids huge pip downloads)
+sudo apt-get install -y \
+    python3-torch python3-torchvision \
+    python3-pil python3-yaml \
+    2>&1 | tail -3
+
+# Install only small packages that aren't in apt
+pip3 install "flask>=2.3" \
     --break-system-packages \
-    --timeout 600 \
-    --resume-retries 5 \
+    --timeout 120 \
     -q
+
+# RPi.GPIO (Linux only)
+pip3 install RPi.GPIO \
+    --break-system-packages \
+    --timeout 120 \
+    -q 2>/dev/null || true
+
 echo "      Done."
 
 # ── Step 3 · NetworkManager – make sure wlan0 is managed ─────────────────
