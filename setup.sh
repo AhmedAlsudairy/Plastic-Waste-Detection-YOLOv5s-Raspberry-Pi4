@@ -43,8 +43,8 @@ sudo chmod 500 /etc/authbind/byport/80
 
 # ── Step 2 · Python packages ──────────────────────────────────────────────
 echo "▶ [2/5] Installing Python packages …"
-pip3 install --upgrade pip -q
-pip3 install -r "$REPO_DIR/requirements.txt" -q
+pip3 install --upgrade pip --break-system-packages -q
+pip3 install -r "$REPO_DIR/requirements.txt" --break-system-packages -q
 echo "      Done."
 
 # ── Step 3 · NetworkManager – make sure wlan0 is managed ─────────────────
