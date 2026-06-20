@@ -25,19 +25,20 @@ import numpy as np
 import torch
 from flask import Flask, Response, jsonify, render_template
 
-_controller = None  # hardware motor/relay controller (optional)
-
-try:
-    from plastic_waste_detector.pi_controller import WasteSorterController
-    _HAS_HW = True
-except Exception:
-    _HAS_HW = False
-
 ROOT = Path(__file__).resolve().parent
 SRC = ROOT / "src"
 for _p in (str(ROOT), str(SRC)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
+
+_controller = None  # hardware motor/relay controller (optional)
+
+try:
+    from plastic_waste_detector.pi_controller import WasteSorterController
+    _HAS_HW = True
+except Exception as _e:
+    print(f"[INFO] HW controller import failed: {_e}")
+    _HAS_HW = False
 
 # BGR colours per class (matches run_desktop.py palette converted for cv2)
 _COLORS = [
