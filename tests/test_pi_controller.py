@@ -106,62 +106,62 @@ def test_push_detection_separate_class_counters():
 # ── Motor control ─────────────────────────────────────────────────────────────
 
 def test_move_forward_sets_pins_correctly():
-    """_move_forward sets IN1=H, IN2=L, IN3=H, IN4=L."""
+    """_move_forward sets IN1=L, IN2=H, IN3=L, IN4=H."""
     import RPi.GPIO as GPIO
     controller = _make_controller()
 
     controller._move_forward()
 
     GPIO.output.assert_has_calls([
-        call(controller.IN1, GPIO.HIGH),
-        call(controller.IN2, GPIO.LOW),
-        call(controller.IN3, GPIO.HIGH),
-        call(controller.IN4, GPIO.LOW),
+        call(controller.IN1, GPIO.LOW),
+        call(controller.IN2, GPIO.HIGH),
+        call(controller.IN3, GPIO.LOW),
+        call(controller.IN4, GPIO.HIGH),
     ], any_order=False)
 
 
 def test_move_backward_sets_pins_correctly():
-    """_move_backward sets IN1=L, IN2=H, IN3=L, IN4=H."""
+    """_move_backward sets IN1=H, IN2=L, IN3=H, IN4=L."""
     import RPi.GPIO as GPIO
     controller = _make_controller()
 
     controller._move_backward()
 
     GPIO.output.assert_has_calls([
-        call(controller.IN1, GPIO.LOW),
-        call(controller.IN2, GPIO.HIGH),
-        call(controller.IN3, GPIO.LOW),
-        call(controller.IN4, GPIO.HIGH),
+        call(controller.IN1, GPIO.HIGH),
+        call(controller.IN2, GPIO.LOW),
+        call(controller.IN3, GPIO.HIGH),
+        call(controller.IN4, GPIO.LOW),
     ], any_order=False)
 
 
 def test_turn_right_sets_pins_correctly():
-    """_turn_right sets IN1=H, IN2=L, IN3=L, IN4=H."""
+    """_turn_right sets IN1=L, IN2=H, IN3=H, IN4=L."""
     import RPi.GPIO as GPIO
     controller = _make_controller()
 
     controller._turn_right()
 
     GPIO.output.assert_has_calls([
-        call(controller.IN1, GPIO.HIGH),
-        call(controller.IN2, GPIO.LOW),
-        call(controller.IN3, GPIO.LOW),
-        call(controller.IN4, GPIO.HIGH),
+        call(controller.IN1, GPIO.LOW),
+        call(controller.IN2, GPIO.HIGH),
+        call(controller.IN3, GPIO.HIGH),
+        call(controller.IN4, GPIO.LOW),
     ], any_order=False)
 
 
 def test_turn_left_sets_pins_correctly():
-    """_turn_left sets IN1=L, IN2=H, IN3=H, IN4=L."""
+    """_turn_left sets IN1=H, IN2=L, IN3=L, IN4=H."""
     import RPi.GPIO as GPIO
     controller = _make_controller()
 
     controller._turn_left()
 
     GPIO.output.assert_has_calls([
-        call(controller.IN1, GPIO.LOW),
-        call(controller.IN2, GPIO.HIGH),
-        call(controller.IN3, GPIO.HIGH),
-        call(controller.IN4, GPIO.LOW),
+        call(controller.IN1, GPIO.HIGH),
+        call(controller.IN2, GPIO.LOW),
+        call(controller.IN3, GPIO.LOW),
+        call(controller.IN4, GPIO.HIGH),
     ], any_order=False)
 
 
