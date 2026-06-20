@@ -25,8 +25,10 @@ import numpy as np
 import torch
 from flask import Flask, Response, jsonify, render_template
 
+_controller = None  # hardware motor/relay controller (optional)
+
 try:
-    from plastic_waste_detector.pi_controller import WasteSorterController, build_detector as _build_hw
+    from plastic_waste_detector.pi_controller import WasteSorterController
     _HAS_HW = True
 except Exception:
     _HAS_HW = False
@@ -214,6 +216,10 @@ class DetectionCamera:
                 _state["frame_count"] += 1
                 _state["camera_ok"] = True
 
+            if _controller is not None:
+                for name in counts:
+                    _controller.push_detection(name)
+
         cap.release()
 
     def _inference_loop(self) -> None:
@@ -346,18 +352,19 @@ def main() -> None:
     camera.start()
 
     if _HAS_HW:
-        def _start_hw_controller():
-            try:
-                data_yaml = ROOT / "data.yaml"
-                detector = _build_hw(args.weights, data_yaml)
-                ctrl = WasteSorterController(detector=detector, classes=detector.labels)
-                ctrl.run()
-            except Exception as exc:
-                print(f"[WARN] Hardware controller stopped: {exc}")
-
-        hw_thread = threading.Thread(target=_start_hw_controller, daemon=True)
-        hw_thread.start()
-        print("[INFO] Hardware controller started in background")
+        global _controller
+        try:
+            _controller = WasteSorterController(
+                detection_threshold=3,
+                collection_time=3.0,
+                movement_timeout=15.0,
+            )
+            hw_thread = threading.Thread(target=_controller.run, daemon=True)
+            hw_thread.start()
+            print("[INFO] Hardware controller started (detects via web app)")
+        except Exception as exc:
+            print(f"[WARN] Hardware controller failed to start: {exc}")
+            _controller = None
     else:
         print("[INFO] Hardware controller unavailable (run on Raspberry Pi)")
 

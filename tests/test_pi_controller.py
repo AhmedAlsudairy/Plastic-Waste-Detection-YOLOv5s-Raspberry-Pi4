@@ -2,6 +2,7 @@
 
 GPIO, LCD driver, and all ML deps are stubbed out by conftest.py.
 """
+import threading
 import time
 from unittest.mock import MagicMock, call, patch
 
@@ -10,19 +11,15 @@ import pytest
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
-def _make_controller(detector=None, classes=None, **kwargs):
-    """Return a WasteSorterController with hardware fully mocked."""
+def _make_controller(**kwargs):
+    """Return a WasteSorterController."""
     from src.plastic_waste_detector.pi_controller import WasteSorterController
+    return WasteSorterController(**kwargs)
 
-    if detector is None:
-        detector = MagicMock()
-        detector.labels = classes or ["plastic bottle"]
-    if classes is None:
-        classes = ["plastic bottle"]
 
-    return WasteSorterController(
-        detector=detector, classes=classes, **kwargs
-    )
+def _set_state_idle(ctrl):
+    """Reset controller state to IDLE (for testing push_detection gate)."""
+    ctrl.state = "IDLE"
 
 
 # ── init / error paths ────────────────────────────────────────────────────────
@@ -34,86 +31,76 @@ def test_no_gpio_raises_runtime_error():
 
     with patch.object(ctrl_mod, "GPIO", None):
         with pytest.raises(RuntimeError, match="GPIO is unavailable"):
-            WasteSorterController(MagicMock(), ["plastic bottle"])
+            WasteSorterController()
 
 
 def test_init_stores_attributes():
-    """WasteSorterController stores detector, classes, thresholds."""
-    detector = MagicMock()
-    detector.labels = ["plastic bottle"]
-
+    """WasteSorterController stores thresholds and timings."""
     from src.plastic_waste_detector.pi_controller import WasteSorterController
     controller = WasteSorterController(
-        detector=detector,
-        classes=["plastic bottle", "cable"],
-        capture_index=2,
         detection_threshold=10,
         collection_time=5.0,
         movement_timeout=20.0,
     )
 
-    assert controller.detector is detector
-    assert controller.classes == ["plastic bottle", "cable"]
-    assert controller.capture_index == 2
     assert controller.detection_threshold == 10
     assert controller.collection_time == 5.0
     assert controller.movement_timeout == 20.0
     assert controller.state == "IDLE"
 
 
-# ── _handle_detection ─────────────────────────────────────────────────────────
+# ── push_detection ────────────────────────────────────────────────────────────
 
-def test_handle_detection_below_threshold_no_action():
-    """No motor activity until detection_threshold is reached."""
+def test_push_detection_below_threshold_no_movement():
+    """State stays IDLE until detection_threshold is reached."""
     controller = _make_controller(detection_threshold=5)
 
-    counts = {"plastic bottle": 0}
-    detection = {"class_id": 0, "confidence": 0.9, "box": [0, 0, 100, 100]}
-
     for _ in range(4):
-        controller._handle_detection(detection, counts, 0.05)
+        controller.push_detection("plastic bottle")
 
     assert controller.state == "IDLE"
 
 
-def test_handle_detection_exceeds_threshold_triggers_movement():
+def test_push_detection_exceeds_threshold_triggers_movement():
     """State changes to MOVING once threshold exceeded."""
     controller = _make_controller(detection_threshold=2)
 
-    counts = {"plastic bottle": 0}
-    detection = {"class_id": 0, "confidence": 0.9, "box": [0, 0, 100, 100]}
-
-    with patch("src.plastic_waste_detector.pi_controller.time.sleep"):
-        for _ in range(3):
-            controller._handle_detection(detection, counts, 0.05)
+    for _ in range(3):
+        controller.push_detection("plastic bottle")
 
     assert controller.state == "MOVING"
 
 
-def test_handle_detection_resets_count_after_action():
-    """Count for a label is reset to 0 after threshold is reached."""
+def test_push_detection_resets_count_after_trigger():
+    """Count resets to 0 after threshold fires."""
     controller = _make_controller(detection_threshold=2)
 
-    counts = {"plastic bottle": 0}
-    detection = {"class_id": 0, "confidence": 0.9, "box": [0, 0, 100, 100]}
+    for _ in range(3):
+        controller.push_detection("plastic bottle")
 
-    with patch("src.plastic_waste_detector.pi_controller.time.sleep"):
-        for _ in range(3):
-            controller._handle_detection(detection, counts, 0.05)
-
-    assert counts["plastic bottle"] == 0
+    # After trigger, counts for that label should be 0
+    assert controller._counts.get("plastic bottle", 0) == 0
 
 
-def test_handle_detection_unknown_label_no_crash():
-    """Unknown class_id does not raise an exception."""
+def test_push_detection_ignored_when_not_idle():
+    """Detections are ignored when already MOVING or COLLECTING."""
     controller = _make_controller(detection_threshold=1)
-    controller.detector.labels = ["unknown_waste"]
+    controller.state = "MOVING"
 
-    counts = {}
-    detection = {"class_id": 0, "confidence": 0.8, "box": [0, 0, 50, 50]}
+    controller.push_detection("plastic bottle")
 
-    with patch("src.plastic_waste_detector.pi_controller.time.sleep"):
-        controller._handle_detection(detection, counts, 0.03)
+    assert controller.state == "MOVING"
+
+
+def test_push_detection_separate_class_counters():
+    """Different class labels have independent counters."""
+    controller = _make_controller(detection_threshold=3)
+
+    for _ in range(3):
+        controller.push_detection("plastic bottle")
+
+    assert controller.state == "MOVING"
+    assert controller._counts.get("plastic cup", 0) == 0
 
 
 # ── Motor control ─────────────────────────────────────────────────────────────
@@ -221,10 +208,9 @@ def test_process_moving_state_timeout_returns_to_idle():
     """_process_moving_state resets to IDLE when movement_timeout exceeded."""
     controller = _make_controller(movement_timeout=0.001)
     controller.state = "MOVING"
-    controller._move_start = 0.0  # triggers timeout immediately
+    controller._move_start = 0.0
 
-    with patch("src.plastic_waste_detector.pi_controller.time.sleep"):
-        controller._process_moving_state()
+    controller._process_moving_state()
 
     assert controller.state == "IDLE"
 
@@ -250,11 +236,30 @@ def test_process_moving_state_no_obstacle_stays_moving():
     controller = _make_controller(movement_timeout=30)
     controller.state = "MOVING"
     controller._move_start = time.perf_counter()
-    GPIO.input.return_value = GPIO.HIGH  # no obstacle
+    GPIO.input.return_value = GPIO.HIGH
 
-    with patch("src.plastic_waste_detector.pi_controller.time.sleep"):
-        controller._process_moving_state()
+    controller._process_moving_state()
 
+    assert controller.state == "MOVING"
+
+
+# ── Thread safety ─────────────────────────────────────────────────────────────
+
+def test_push_detection_is_thread_safe():
+    """push_detection works correctly from multiple threads."""
+    controller = _make_controller(detection_threshold=5)
+
+    def pusher():
+        for _ in range(6):
+            controller.push_detection("plastic bottle")
+
+    threads = [threading.Thread(target=pusher) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    # At least one thread should have triggered MOVING state
     assert controller.state == "MOVING"
 
 

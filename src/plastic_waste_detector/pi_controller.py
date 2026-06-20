@@ -2,12 +2,11 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, Iterable, List, MutableMapping
+from typing import List
 
+import threading
 import time
 import yaml
-
-import cv2
 
 try:  # pragma: no cover - hardware dependency
     import RPi.GPIO as GPIO
@@ -18,7 +17,7 @@ from .detector import PlasticWasteDetector
 
 
 class WasteSorterController:
-    """Encapsulates GPIO, motors, relay and detection loop for the sorter."""
+    """GPIO motor/relay controller. Receives detections externally via push_detection()."""
 
     IR_PIN = 18
     RELAY_PIN = 14
@@ -29,10 +28,7 @@ class WasteSorterController:
 
     def __init__(
         self,
-        detector: PlasticWasteDetector,
-        classes: Iterable[str],
-        capture_index: int = 0,
-        detection_threshold: int = 5,
+        detection_threshold: int = 3,
         collection_time: float = 3.0,
         movement_timeout: float = 15.0,
     ) -> None:
@@ -41,15 +37,15 @@ class WasteSorterController:
                 "GPIO is unavailable. Run on Raspberry Pi with RPi.GPIO installed"
             )
 
-        self.detector = detector
-        self.classes = list(classes)
-        self.capture_index = capture_index
         self.detection_threshold = detection_threshold
         self.collection_time = collection_time
         self.movement_timeout = movement_timeout
 
         self.state: str = "IDLE"
         self._move_start: float = 0.0
+        self._counts: dict[str, int] = {}
+        self._running: bool = False
+        self._lock = threading.Lock()
 
     def setup(self) -> None:
         GPIO.setwarnings(False)
@@ -61,53 +57,42 @@ class WasteSorterController:
         for pin in (self.IN1, self.IN2, self.IN3, self.IN4):
             GPIO.setup(pin, GPIO.OUT, initial=GPIO.LOW)
 
+        print(f"[MOTOR] GPIO ready  IR={self.IR_PIN} RLY={self.RELAY_PIN}  "
+              f"IN1={self.IN1} IN2={self.IN2} IN3={self.IN3} IN4={self.IN4}")
+
     def run(self) -> None:
+        """Main loop — handles state machine. No camera, no inference."""
         self.setup()
-        capture = cv2.VideoCapture(self.capture_index)
-        counts = {name: 0 for name in self.classes}
-
+        self._running = True
         try:
-            while True:
-                ret, frame = capture.read()
-                if not ret:
-                    continue
-
-                frame = cv2.flip(frame, 1)
-
-                if self.state == "IDLE":
-                    detections, latency = self.detector.inference(frame)
-                    for detection in detections:
-                        self._handle_detection(detection, counts, latency)
-                elif self.state == "MOVING":
+            while self._running:
+                if self.state == "MOVING":
+                    self._move_forward()
                     self._process_moving_state()
-                elif self.state == "COLLECTING":
-                    pass
-
-                if cv2.waitKey(1) & 0xFF == ord("q"):
-                    break
+                else:
+                    time.sleep(0.05)
         finally:
-            capture.release()
-            cv2.destroyAllWindows()
             self._stop_motors()
             GPIO.cleanup()
+            print("[MOTOR] Stopped")
 
-    def _handle_detection(
-        self,
-        detection: MutableMapping[str, float | int | List[float]],
-        counts: Dict[str, int],
-        latency: float,
-    ) -> None:
-        class_id = int(detection["class_id"])
-        label = self.detector.labels[class_id]
-        counts[label] = counts.get(label, 0) + 1
+    def stop(self) -> None:
+        self._running = False
 
-        if counts[label] <= self.detection_threshold:
-            return
+    def push_detection(self, label: str) -> None:
+        """Called from web app capture thread every frame a waste object is seen."""
+        with self._lock:
+            if self.state != "IDLE":
+                return
 
-        counts[label] = 0
-        self._move_forward()
-        self.state = "MOVING"
-        self._move_start = time.perf_counter()
+            cnt = self._counts.get(label, 0) + 1
+            self._counts[label] = cnt
+
+            if cnt >= self.detection_threshold:
+                self._counts[label] = 0
+                print(f"[MOTOR] Detected '{label}' ({cnt} frames)  ->  MOVING")
+                self.state = "MOVING"
+                self._move_start = time.perf_counter()
 
     # ── State machine helpers ──────────────────────────────────────────────
 
@@ -115,15 +100,18 @@ class WasteSorterController:
         """Check IR sensor while moving; transition to COLLECTING on obstacle."""
         if time.perf_counter() - self._move_start > self.movement_timeout:
             self._stop_motors()
+            print("[MOTOR] Movement timeout — back to IDLE")
             self.state = "IDLE"
             return
 
         if GPIO.input(self.IR_PIN) == GPIO.LOW:
             self._stop_motors()
             self._activate_relay()
+            print(f"[MOTOR] IR triggered — relay ON ({self.collection_time}s)")
             self.state = "COLLECTING"
             time.sleep(self.collection_time)
             self._deactivate_relay()
+            print("[MOTOR] Relay OFF — back to IDLE")
             self.state = "IDLE"
 
     # ── Motor control ──────────────────────────────────────────────────────
@@ -168,6 +156,7 @@ class WasteSorterController:
 
 
 def build_detector(weights_path: Path | str, data_yaml: Path | str) -> PlasticWasteDetector:
+    """Load model and return a detector instance (used by scripts/run_pi.py)."""
     with open(data_yaml, "r", encoding="utf-8") as stream:
         data = yaml.safe_load(stream)
     labels: List[str] = data.get("names", [])
