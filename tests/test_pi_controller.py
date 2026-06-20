@@ -2,6 +2,7 @@
 
 GPIO, LCD driver, and all ML deps are stubbed out by conftest.py.
 """
+import time
 from unittest.mock import MagicMock, call, patch
 
 import pytest
@@ -231,6 +232,19 @@ def test_deactivate_relay_sets_high():
 
 # ── State machine ─────────────────────────────────────────────────────────────
 
+def test_process_moving_state_timeout_returns_to_idle():
+    """_process_moving_state resets to IDLE when movement_timeout exceeded."""
+    controller = _make_controller(movement_timeout=0.001)
+    controller.display = MagicMock()
+    controller.state = "MOVING"
+    controller._move_start = 0.0  # triggers timeout immediately
+
+    with patch("src.plastic_waste_detector.pi_controller.time.sleep"):
+        controller._process_moving_state()
+
+    assert controller.state == "IDLE"
+
+
 def test_process_moving_state_ir_obstacle_detected():
     """_process_moving_state stops motors, fires relay, resets to IDLE."""
     import RPi.GPIO as GPIO
@@ -249,9 +263,10 @@ def test_process_moving_state_ir_obstacle_detected():
 def test_process_moving_state_no_obstacle_stays_moving():
     """_process_moving_state stays MOVING when IR sees no obstacle."""
     import RPi.GPIO as GPIO
-    controller = _make_controller()
+    controller = _make_controller(movement_timeout=30)
     controller.display = MagicMock()
     controller.state = "MOVING"
+    controller._move_start = time.perf_counter()
     GPIO.input.return_value = GPIO.HIGH  # no obstacle
 
     with patch("src.plastic_waste_detector.pi_controller.time.sleep"):

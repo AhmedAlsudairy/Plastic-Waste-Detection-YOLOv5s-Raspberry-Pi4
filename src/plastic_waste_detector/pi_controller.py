@@ -39,6 +39,7 @@ class WasteSorterController:
         capture_index: int = 0,
         detection_threshold: int = 5,
         collection_time: float = 3.0,
+        movement_timeout: float = 15.0,
     ) -> None:
         if GPIO is None or drivers is None:
             raise RuntimeError(
@@ -50,9 +51,11 @@ class WasteSorterController:
         self.capture_index = capture_index
         self.detection_threshold = detection_threshold
         self.collection_time = collection_time
+        self.movement_timeout = movement_timeout
 
         self.display = drivers.Lcd()
-        self.state = "IDLE"
+        self.state: str = "IDLE"
+        self._move_start: float = 0.0
 
         self.label_map: Dict[str, str] = {
             "plastic bottle": "PET",
@@ -102,6 +105,8 @@ class WasteSorterController:
                         self._handle_detection(detection, counts, latency)
                 elif self.state == "MOVING":
                     self._process_moving_state()
+                elif self.state == "COLLECTING":
+                    pass
 
                 if cv2.waitKey(1) & 0xFF == ord("q"):
                     break
@@ -129,17 +134,26 @@ class WasteSorterController:
         self.display.lcd_clear()
         self.display.lcd_display_string(short_label, 1)
         self.display.lcd_display_string("TERDETEKSI", 2)
-        time.sleep(1)
         self.display.lcd_clear()
-        self.display.lcd_display_string("-MENDEXATI-", 1)
+        self.display.lcd_display_string("-MENDEKATI-", 1)
 
         self._move_forward()
         self.state = "MOVING"
+        self._move_start = time.perf_counter()
 
     # ── State machine helpers ──────────────────────────────────────────────
 
     def _process_moving_state(self) -> None:
         """Check IR sensor while moving; transition to COLLECTING on obstacle."""
+        if time.perf_counter() - self._move_start > self.movement_timeout:
+            self._stop_motors()
+            self.display.lcd_clear()
+            self.display.lcd_display_string("TIMEOUT", 1)
+            time.sleep(1)
+            self.display.lcd_clear()
+            self.state = "IDLE"
+            return
+
         if GPIO.input(self.IR_PIN) == GPIO.LOW:
             self._stop_motors()
             self._activate_relay()

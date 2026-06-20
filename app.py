@@ -21,13 +21,21 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 import cv2
+import numpy as np
 import torch
 from flask import Flask, Response, jsonify, render_template
 
+try:
+    from plastic_waste_detector.pi_controller import WasteSorterController, build_detector as _build_hw
+    _HAS_HW = True
+except Exception:
+    _HAS_HW = False
+
 ROOT = Path(__file__).resolve().parent
 SRC = ROOT / "src"
-if str(SRC) not in sys.path:
-    sys.path.insert(0, str(SRC))
+for _p in (str(ROOT), str(SRC)):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 # BGR colours per class (matches run_desktop.py palette converted for cv2)
 _COLORS = [
@@ -76,27 +84,44 @@ class DetectionCamera:
         self.weights = weights
         self.names: Dict[int, str] = {}
         self._stopped = threading.Event()
+        self._raw_frame = None
+        self._raw_lock = threading.Lock()
+        self._last_det = np.zeros((0, 6))
+        self._det_lock = threading.Lock()
         self._thread = threading.Thread(target=self._capture_loop, daemon=True)
+        self._infer_thread = threading.Thread(target=self._inference_loop, daemon=True)
 
     def start(self) -> None:
         print(f"[INFO] Loading model: {self.weights}")
-        self.model = torch.hub.load(
-            "ultralytics/yolov5",
-            "custom",
-            path=self.weights,
-            force_reload=False,
-            verbose=False,
-        )
-        self.model.conf = self.conf
-        self.model.iou = self.iou
-        self.names = self.model.names  # {0: 'cable', 1: 'plastic bottle', …}
+        from models.experimental import attempt_load
+        from utils.general import non_max_suppression
+
+        self.model = attempt_load(str(self.weights))
+        self.model.eval()
+        self._nms = non_max_suppression
+
+        names = getattr(self.model, "names", None)
+        if isinstance(names, list):
+            self.names = {i: n for i, n in enumerate(names)}
+        elif isinstance(names, dict):
+            self.names = names
+        else:
+            classes_txt = ROOT / "classes.txt"
+            if classes_txt.exists():
+                self.names = {
+                    i: ln.strip()
+                    for i, ln in enumerate(classes_txt.read_text().splitlines())
+                    if ln.strip()
+                }
         print(f"[INFO] Model loaded. Classes: {self.names}")
         self._thread.start()
+        self._infer_thread.start()
 
     def stop(self) -> None:
         self._stopped.set()
 
     def _capture_loop(self) -> None:
+        """Reads camera at full speed (~30 FPS), overlays last known detections."""
         global _latest_frame, _state
 
         src: int | str = int(self.source) if self.source.isdigit() else self.source
@@ -113,16 +138,14 @@ class DetectionCamera:
                 time.sleep(0.05)
                 continue
 
-            t0 = time.perf_counter()
+            # Share raw frame with inference thread
+            with self._raw_lock:
+                self._raw_frame = frame.copy()
 
-            # ── Inference ────────────────────────────────────────────────────
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            results = self.model(rgb, size=self.size)
-            inf_ms = (time.perf_counter() - t0) * 1000
+            # Draw last known detections (from inference thread)
+            with self._det_lock:
+                det = self._last_det.copy()
 
-            det = results.xyxy[0].cpu().numpy()  # [x1,y1,x2,y2,conf,cls]
-
-            # ── Draw boxes & collect stats ───────────────────────────────────
             counts: Dict[str, int] = defaultdict(int)
             detections = []
             last_label, last_conf = "—", 0.0
@@ -134,10 +157,7 @@ class DetectionCamera:
                 color = _COLORS[cls % len(_COLORS)]
                 label_text = f"{name}  {conf:.2f}"
 
-                # Bounding box
                 cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-
-                # Label background
                 (tw, th), _ = cv2.getTextSize(
                     label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 1
                 )
@@ -162,7 +182,7 @@ class DetectionCamera:
                 if float(conf) > last_conf:
                     last_label, last_conf = name, float(conf)
 
-            # ── FPS overlay ──────────────────────────────────────────────────
+            # FPS overlay
             fps_times.append(time.perf_counter())
             fps = (
                 len(fps_times) / (fps_times[-1] - fps_times[0] + 1e-9)
@@ -180,17 +200,13 @@ class DetectionCamera:
                 cv2.LINE_AA,
             )
 
-            # ── Encode & publish frame ────────────────────────────────────────
-            ok, buf = cv2.imencode(
-                ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80]
-            )
+            ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
             if ok:
                 with _frame_lock:
                     _latest_frame = buf.tobytes()
 
             with _state_lock:
                 _state["fps"] = round(fps, 1)
-                _state["inference_ms"] = round(inf_ms, 1)
                 _state["detections"] = detections
                 _state["counts"] = dict(counts)
                 _state["last_label"] = last_label
@@ -199,6 +215,54 @@ class DetectionCamera:
                 _state["camera_ok"] = True
 
         cap.release()
+
+    def _inference_loop(self) -> None:
+        """Runs model inference on latest frames (~1 FPS on Pi), updates cached detections."""
+        while not self._stopped.is_set():
+            with self._raw_lock:
+                frame = self._raw_frame
+                if frame is not None:
+                    frame = frame.copy()
+
+            if frame is None:
+                time.sleep(0.01)
+                continue
+
+            h0, w0 = frame.shape[:2]
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            r = self.size / max(h0, w0)
+            h1, w1 = int(h0 * r), int(w0 * r)
+            img = cv2.resize(rgb, (w1, h1))
+            dh, dw = self.size - h1, self.size - w1
+            img = cv2.copyMakeBorder(
+                img, 0, dh, 0, dw, cv2.BORDER_CONSTANT, value=(114, 114, 114)
+            )
+            img_t = (
+                torch.from_numpy(np.ascontiguousarray(img.transpose(2, 0, 1)))
+                .float()
+                .div(255.0)
+                .unsqueeze(0)
+            )
+
+            t0 = time.perf_counter()
+            with torch.no_grad():
+                pred = self.model(img_t)[0]
+            inf_ms = (time.perf_counter() - t0) * 1000
+
+            preds = self._nms(pred, self.conf, self.iou)[0]
+            if preds is not None and len(preds):
+                p = preds.cpu().numpy()
+                p[:, [0, 2]] = np.clip(p[:, [0, 2]] / self.size * w0, 0, w0)
+                p[:, [1, 3]] = np.clip(p[:, [1, 3]] / self.size * h0, 0, h0)
+                det = p
+            else:
+                det = np.zeros((0, 6))
+
+            with self._det_lock:
+                self._last_det = det
+
+            with _state_lock:
+                _state["inference_ms"] = round(inf_ms, 1)
 
 
 # ── Flask app ────────────────────────────────────────────────────────────────
@@ -280,6 +344,22 @@ def main() -> None:
         iou=args.iou,
     )
     camera.start()
+
+    if _HAS_HW:
+        def _start_hw_controller():
+            try:
+                data_yaml = ROOT / "data.yaml"
+                detector = _build_hw(args.weights, data_yaml)
+                ctrl = WasteSorterController(detector=detector, classes=detector.labels)
+                ctrl.run()
+            except Exception as exc:
+                print(f"[WARN] Hardware controller stopped: {exc}")
+
+        hw_thread = threading.Thread(target=_start_hw_controller, daemon=True)
+        hw_thread.start()
+        print("[INFO] Hardware controller started in background")
+    else:
+        print("[INFO] Hardware controller unavailable (run on Raspberry Pi)")
 
     print(f"\n[INFO] Web UI available at  http://{args.host}")
     print(f"[INFO] On Raspberry Pi use  http://<pi-ip>  (no port needed)\n")
