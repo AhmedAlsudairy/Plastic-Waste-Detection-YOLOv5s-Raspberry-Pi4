@@ -1,7 +1,6 @@
 """Runtime control loop for the Raspberry Pi deployment."""
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, MutableMapping
 
@@ -23,23 +22,15 @@ except ModuleNotFoundError:  # pragma: no cover
 from .detector import PlasticWasteDetector
 
 
-@dataclass
-class ServoConfig:
-    pwm_pin: int
-    neutral_duty_cycle: float
-    active_duty_cycle: float
-
-
-@dataclass
-class SortingAction:
-    label: str
-    display_line: str
-    servo1: ServoConfig
-    servo2: ServoConfig
-
-
 class WasteSorterController:
-    """Encapsulates GPIO, LCD and detection loop for the sorter."""
+    """Encapsulates GPIO, LCD, motors, relay and detection loop for the sorter."""
+
+    IR_PIN = 18
+    RELAY_PIN = 14
+    IN1 = 8
+    IN2 = 7
+    IN3 = 16
+    IN4 = 20
 
     def __init__(
         self,
@@ -47,6 +38,7 @@ class WasteSorterController:
         classes: Iterable[str],
         capture_index: int = 0,
         detection_threshold: int = 5,
+        collection_time: float = 3.0,
     ) -> None:
         if GPIO is None or drivers is None:
             raise RuntimeError(
@@ -57,79 +49,33 @@ class WasteSorterController:
         self.classes = list(classes)
         self.capture_index = capture_index
         self.detection_threshold = detection_threshold
+        self.collection_time = collection_time
 
         self.display = drivers.Lcd()
-        self.servo1_pwm = None
-        self.servo2_pwm = None
+        self.state = "IDLE"
 
-        # Maps class names to sorting actions; duty cycles tuned from original script
-        self.actions: Dict[str, SortingAction] = {
-            "plastic bottle": SortingAction(
-                label="PET",
-                display_line="-Recycle-",
-                servo1=ServoConfig(pwm_pin=33, neutral_duty_cycle=7.5, active_duty_cycle=11.5),
-                servo2=ServoConfig(pwm_pin=12, neutral_duty_cycle=4.5, active_duty_cycle=9.0),
-            ),
-            "plastic cup": SortingAction(
-                label="PP",
-                display_line="-Recycle-",
-                servo1=ServoConfig(pwm_pin=33, neutral_duty_cycle=7.5, active_duty_cycle=3.5),
-                servo2=ServoConfig(pwm_pin=12, neutral_duty_cycle=4.5, active_duty_cycle=9.0),
-            ),
-            "soap bottle": SortingAction(
-                label="HDPE",
-                display_line="-Recycle-",
-                servo1=ServoConfig(pwm_pin=33, neutral_duty_cycle=7.5, active_duty_cycle=3.5),
-                servo2=ServoConfig(pwm_pin=12, neutral_duty_cycle=4.5, active_duty_cycle=1.2),
-            ),
-            "cable": SortingAction(
-                label="PVC",
-                display_line="-Non Recycle-",
-                servo1=ServoConfig(pwm_pin=33, neutral_duty_cycle=7.5, active_duty_cycle=11.5),
-                servo2=ServoConfig(pwm_pin=12, neutral_duty_cycle=4.5, active_duty_cycle=1.2),
-            ),
-            "sterofoam": SortingAction(
-                label="PS",
-                display_line="-Non Recycle-",
-                servo1=ServoConfig(pwm_pin=33, neutral_duty_cycle=7.5, active_duty_cycle=11.5),
-                servo2=ServoConfig(pwm_pin=12, neutral_duty_cycle=4.5, active_duty_cycle=1.2),
-            ),
-            "plastic bag": SortingAction(
-                label="LDPE",
-                display_line="-Non Recycle-",
-                servo1=ServoConfig(pwm_pin=33, neutral_duty_cycle=7.5, active_duty_cycle=11.5),
-                servo2=ServoConfig(pwm_pin=12, neutral_duty_cycle=4.5, active_duty_cycle=1.2),
-            ),
+        self.label_map: Dict[str, str] = {
+            "plastic bottle": "PET",
+            "plastic cup": "PP",
+            "soap bottle": "HDPE",
+            "cable": "PVC",
+            "sterofoam": "PS",
+            "plastic bag": "LDPE",
         }
 
     def setup(self) -> None:
         GPIO.setwarnings(False)
-        GPIO.setmode(GPIO.BOARD)
+        GPIO.setmode(GPIO.BCM)
 
         self.display.lcd_clear()
         self.display.lcd_display_string("STAND", 1)
         self.display.lcd_display_string("BY", 2)
 
-        infrared_pin = 38
-        GPIO.setup(infrared_pin, GPIO.IN)
+        GPIO.setup(self.IR_PIN, GPIO.IN)
+        GPIO.setup(self.RELAY_PIN, GPIO.OUT, initial=GPIO.HIGH)
 
-        servo1_pin = 33
-        servo2_pin = 12
-        GPIO.setup(servo1_pin, GPIO.OUT)
-        GPIO.setup(servo2_pin, GPIO.OUT)
-
-        self.servo1_pwm = GPIO.PWM(servo1_pin, 50)
-        self.servo2_pwm = GPIO.PWM(servo2_pin, 50)
-
-        neutral_servo1 = self.actions["plastic bottle"].servo1.neutral_duty_cycle
-        neutral_servo2 = self.actions["plastic bottle"].servo2.neutral_duty_cycle
-
-        self.servo1_pwm.start(neutral_servo1)
-        time.sleep(1)
-        self.servo1_pwm.ChangeDutyCycle(0)
-        self.servo2_pwm.start(neutral_servo2)
-        time.sleep(1)
-        self.servo2_pwm.ChangeDutyCycle(0)
+        for pin in (self.IN1, self.IN2, self.IN3, self.IN4):
+            GPIO.setup(pin, GPIO.OUT, initial=GPIO.LOW)
 
         self.display.lcd_clear()
         self.display.lcd_display_string("MENYALAKAN", 1)
@@ -140,7 +86,7 @@ class WasteSorterController:
     def run(self) -> None:
         self.setup()
         capture = cv2.VideoCapture(self.capture_index)
-        counts = {name: 0 for name in self.actions}
+        counts = {name: 0 for name in self.classes}
 
         try:
             while True:
@@ -149,16 +95,20 @@ class WasteSorterController:
                     continue
 
                 frame = cv2.flip(frame, 1)
-                detections, latency = self.detector.inference(frame)
 
-                for detection in detections:
-                    self._handle_detection(detection, counts, latency)
+                if self.state == "IDLE":
+                    detections, latency = self.detector.inference(frame)
+                    for detection in detections:
+                        self._handle_detection(detection, counts, latency)
+                elif self.state == "MOVING":
+                    self._process_moving_state()
 
                 if cv2.waitKey(1) & 0xFF == ord("q"):
                     break
         finally:
             capture.release()
             cv2.destroyAllWindows()
+            self._stop_motors()
             GPIO.cleanup()
 
     def _handle_detection(
@@ -174,35 +124,72 @@ class WasteSorterController:
         if counts[label] <= self.detection_threshold:
             return
 
-        action = self.actions.get(label)
-        if not action:
-            return
-
-        self.display.lcd_display_string(action.display_line, 1)
-        time.sleep(1)
-        self.display.lcd_display_string(action.label, 2)
-
-        self._swing_servo(self.servo1_pwm, action.servo1)
-        self._swing_servo(self.servo2_pwm, action.servo2)
-
-        self.display.lcd_clear()
-        self.display.lcd_display_string("Waktu Komputasi:", 1)
-        self.display.lcd_display_string(f"{latency:.3f}s", 2)
-        time.sleep(4)
-        self.display.lcd_clear()
-
         counts[label] = 0
+        short_label = self.label_map.get(label, label.upper())
+        self.display.lcd_clear()
+        self.display.lcd_display_string(short_label, 1)
+        self.display.lcd_display_string("TERDETEKSI", 2)
+        time.sleep(1)
+        self.display.lcd_clear()
+        self.display.lcd_display_string("-MENDEXATI-", 1)
 
-    @staticmethod
-    def _swing_servo(pwm, config: ServoConfig) -> None:
-        if pwm is None:
-            return
+        self._move_forward()
+        self.state = "MOVING"
 
-        pwm.ChangeDutyCycle(config.active_duty_cycle)
-        time.sleep(4)
-        pwm.ChangeDutyCycle(config.neutral_duty_cycle)
-        time.sleep(4)
-        pwm.ChangeDutyCycle(0)
+    # ── State machine helpers ──────────────────────────────────────────────
+
+    def _process_moving_state(self) -> None:
+        """Check IR sensor while moving; transition to COLLECTING on obstacle."""
+        if GPIO.input(self.IR_PIN) == GPIO.LOW:
+            self._stop_motors()
+            self._activate_relay()
+            self.display.lcd_clear()
+            self.display.lcd_display_string("MENGUMPULKAN", 1)
+            self.state = "COLLECTING"
+            time.sleep(self.collection_time)
+            self._deactivate_relay()
+            self.display.lcd_clear()
+            self.state = "IDLE"
+
+    # ── Motor control ──────────────────────────────────────────────────────
+
+    def _move_forward(self) -> None:
+        GPIO.output(self.IN1, GPIO.HIGH)
+        GPIO.output(self.IN2, GPIO.LOW)
+        GPIO.output(self.IN3, GPIO.HIGH)
+        GPIO.output(self.IN4, GPIO.LOW)
+
+    def _move_backward(self) -> None:
+        GPIO.output(self.IN1, GPIO.LOW)
+        GPIO.output(self.IN2, GPIO.HIGH)
+        GPIO.output(self.IN3, GPIO.LOW)
+        GPIO.output(self.IN4, GPIO.HIGH)
+
+    def _turn_right(self) -> None:
+        GPIO.output(self.IN1, GPIO.HIGH)
+        GPIO.output(self.IN2, GPIO.LOW)
+        GPIO.output(self.IN3, GPIO.LOW)
+        GPIO.output(self.IN4, GPIO.HIGH)
+
+    def _turn_left(self) -> None:
+        GPIO.output(self.IN1, GPIO.LOW)
+        GPIO.output(self.IN2, GPIO.HIGH)
+        GPIO.output(self.IN3, GPIO.HIGH)
+        GPIO.output(self.IN4, GPIO.LOW)
+
+    def _stop_motors(self) -> None:
+        GPIO.output(self.IN1, GPIO.LOW)
+        GPIO.output(self.IN2, GPIO.LOW)
+        GPIO.output(self.IN3, GPIO.LOW)
+        GPIO.output(self.IN4, GPIO.LOW)
+
+    # ── Relay control ──────────────────────────────────────────────────────
+
+    def _activate_relay(self) -> None:
+        GPIO.output(self.RELAY_PIN, GPIO.LOW)
+
+    def _deactivate_relay(self) -> None:
+        GPIO.output(self.RELAY_PIN, GPIO.HIGH)
 
 
 def build_detector(weights_path: Path | str, data_yaml: Path | str) -> PlasticWasteDetector:
