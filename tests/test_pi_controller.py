@@ -11,7 +11,7 @@ import pytest
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 def _make_controller(detector=None, classes=None, **kwargs):
-    """Return a WasteSorterController with display fully mocked."""
+    """Return a WasteSorterController with hardware fully mocked."""
     from src.plastic_waste_detector.pi_controller import WasteSorterController
 
     if detector is None:
@@ -20,11 +20,9 @@ def _make_controller(detector=None, classes=None, **kwargs):
     if classes is None:
         classes = ["plastic bottle"]
 
-    with patch("src.plastic_waste_detector.pi_controller.drivers") as mock_drv:
-        controller = WasteSorterController(
-            detector=detector, classes=classes, **kwargs
-        )
-    return controller
+    return WasteSorterController(
+        detector=detector, classes=classes, **kwargs
+    )
 
 
 # ── init / error paths ────────────────────────────────────────────────────────
@@ -34,8 +32,8 @@ def test_no_gpio_raises_runtime_error():
     import src.plastic_waste_detector.pi_controller as ctrl_mod
     from src.plastic_waste_detector.pi_controller import WasteSorterController
 
-    with patch.object(ctrl_mod, "GPIO", None), patch.object(ctrl_mod, "drivers", None):
-        with pytest.raises(RuntimeError, match="GPIO or LCD drivers"):
+    with patch.object(ctrl_mod, "GPIO", None):
+        with pytest.raises(RuntimeError, match="GPIO is unavailable"):
             WasteSorterController(MagicMock(), ["plastic bottle"])
 
 
@@ -44,38 +42,30 @@ def test_init_stores_attributes():
     detector = MagicMock()
     detector.labels = ["plastic bottle"]
 
-    with patch("src.plastic_waste_detector.pi_controller.drivers"):
-        from src.plastic_waste_detector.pi_controller import WasteSorterController
-        controller = WasteSorterController(
-            detector=detector,
-            classes=["plastic bottle", "cable"],
-            capture_index=2,
-            detection_threshold=10,
-            collection_time=5.0,
-        )
+    from src.plastic_waste_detector.pi_controller import WasteSorterController
+    controller = WasteSorterController(
+        detector=detector,
+        classes=["plastic bottle", "cable"],
+        capture_index=2,
+        detection_threshold=10,
+        collection_time=5.0,
+        movement_timeout=20.0,
+    )
 
     assert controller.detector is detector
     assert controller.classes == ["plastic bottle", "cable"]
     assert controller.capture_index == 2
     assert controller.detection_threshold == 10
     assert controller.collection_time == 5.0
+    assert controller.movement_timeout == 20.0
     assert controller.state == "IDLE"
-
-
-def test_init_label_map_defined():
-    """All six plastic categories have label_map entries."""
-    controller = _make_controller()
-
-    expected = {"plastic bottle", "plastic cup", "soap bottle", "cable", "sterofoam", "plastic bag"}
-    assert set(controller.label_map.keys()) == expected
 
 
 # ── _handle_detection ─────────────────────────────────────────────────────────
 
 def test_handle_detection_below_threshold_no_action():
-    """No LCD / motor activity until detection_threshold is reached."""
+    """No motor activity until detection_threshold is reached."""
     controller = _make_controller(detection_threshold=5)
-    controller.display = MagicMock()
 
     counts = {"plastic bottle": 0}
     detection = {"class_id": 0, "confidence": 0.9, "box": [0, 0, 100, 100]}
@@ -83,14 +73,12 @@ def test_handle_detection_below_threshold_no_action():
     for _ in range(4):
         controller._handle_detection(detection, counts, 0.05)
 
-    controller.display.lcd_display_string.assert_not_called()
     assert controller.state == "IDLE"
 
 
 def test_handle_detection_exceeds_threshold_triggers_movement():
-    """LCD shows detection and state changes to MOVING once threshold exceeded."""
+    """State changes to MOVING once threshold exceeded."""
     controller = _make_controller(detection_threshold=2)
-    controller.display = MagicMock()
 
     counts = {"plastic bottle": 0}
     detection = {"class_id": 0, "confidence": 0.9, "box": [0, 0, 100, 100]}
@@ -99,14 +87,12 @@ def test_handle_detection_exceeds_threshold_triggers_movement():
         for _ in range(3):
             controller._handle_detection(detection, counts, 0.05)
 
-    controller.display.lcd_display_string.assert_called()
     assert controller.state == "MOVING"
 
 
 def test_handle_detection_resets_count_after_action():
     """Count for a label is reset to 0 after threshold is reached."""
     controller = _make_controller(detection_threshold=2)
-    controller.display = MagicMock()
 
     counts = {"plastic bottle": 0}
     detection = {"class_id": 0, "confidence": 0.9, "box": [0, 0, 100, 100]}
@@ -122,7 +108,6 @@ def test_handle_detection_unknown_label_no_crash():
     """Unknown class_id does not raise an exception."""
     controller = _make_controller(detection_threshold=1)
     controller.detector.labels = ["unknown_waste"]
-    controller.display = MagicMock()
 
     counts = {}
     detection = {"class_id": 0, "confidence": 0.8, "box": [0, 0, 50, 50]}
@@ -235,7 +220,6 @@ def test_deactivate_relay_sets_high():
 def test_process_moving_state_timeout_returns_to_idle():
     """_process_moving_state resets to IDLE when movement_timeout exceeded."""
     controller = _make_controller(movement_timeout=0.001)
-    controller.display = MagicMock()
     controller.state = "MOVING"
     controller._move_start = 0.0  # triggers timeout immediately
 
@@ -249,8 +233,8 @@ def test_process_moving_state_ir_obstacle_detected():
     """_process_moving_state stops motors, fires relay, resets to IDLE."""
     import RPi.GPIO as GPIO
     controller = _make_controller(collection_time=0.01)
-    controller.display = MagicMock()
     controller.state = "MOVING"
+    controller._move_start = time.perf_counter()
     GPIO.input.return_value = GPIO.LOW
 
     with patch("src.plastic_waste_detector.pi_controller.time.sleep"):
@@ -264,7 +248,6 @@ def test_process_moving_state_no_obstacle_stays_moving():
     """_process_moving_state stays MOVING when IR sees no obstacle."""
     import RPi.GPIO as GPIO
     controller = _make_controller(movement_timeout=30)
-    controller.display = MagicMock()
     controller.state = "MOVING"
     controller._move_start = time.perf_counter()
     GPIO.input.return_value = GPIO.HIGH  # no obstacle

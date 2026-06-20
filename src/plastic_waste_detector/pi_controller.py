@@ -14,16 +14,11 @@ try:  # pragma: no cover - hardware dependency
 except ModuleNotFoundError:  # pragma: no cover - allows development on non-Pi hosts
     GPIO = None  # type: ignore
 
-try:  # pragma: no cover - hardware dependency
-    import drivers  # LCD driver used on the Pi
-except ModuleNotFoundError:  # pragma: no cover
-    drivers = None  # type: ignore
-
 from .detector import PlasticWasteDetector
 
 
 class WasteSorterController:
-    """Encapsulates GPIO, LCD, motors, relay and detection loop for the sorter."""
+    """Encapsulates GPIO, motors, relay and detection loop for the sorter."""
 
     IR_PIN = 18
     RELAY_PIN = 14
@@ -41,9 +36,9 @@ class WasteSorterController:
         collection_time: float = 3.0,
         movement_timeout: float = 15.0,
     ) -> None:
-        if GPIO is None or drivers is None:
+        if GPIO is None:
             raise RuntimeError(
-                "GPIO or LCD drivers are unavailable. Run on Raspberry Pi with required libraries installed"
+                "GPIO is unavailable. Run on Raspberry Pi with RPi.GPIO installed"
             )
 
         self.detector = detector
@@ -53,38 +48,18 @@ class WasteSorterController:
         self.collection_time = collection_time
         self.movement_timeout = movement_timeout
 
-        self.display = drivers.Lcd()
         self.state: str = "IDLE"
         self._move_start: float = 0.0
-
-        self.label_map: Dict[str, str] = {
-            "plastic bottle": "PET",
-            "plastic cup": "PP",
-            "soap bottle": "HDPE",
-            "cable": "PVC",
-            "sterofoam": "PS",
-            "plastic bag": "LDPE",
-        }
 
     def setup(self) -> None:
         GPIO.setwarnings(False)
         GPIO.setmode(GPIO.BCM)
-
-        self.display.lcd_clear()
-        self.display.lcd_display_string("STAND", 1)
-        self.display.lcd_display_string("BY", 2)
 
         GPIO.setup(self.IR_PIN, GPIO.IN)
         GPIO.setup(self.RELAY_PIN, GPIO.OUT, initial=GPIO.HIGH)
 
         for pin in (self.IN1, self.IN2, self.IN3, self.IN4):
             GPIO.setup(pin, GPIO.OUT, initial=GPIO.LOW)
-
-        self.display.lcd_clear()
-        self.display.lcd_display_string("MENYALAKAN", 1)
-        self.display.lcd_display_string("KAMERA", 2)
-        time.sleep(2)
-        self.display.lcd_clear()
 
     def run(self) -> None:
         self.setup()
@@ -130,13 +105,6 @@ class WasteSorterController:
             return
 
         counts[label] = 0
-        short_label = self.label_map.get(label, label.upper())
-        self.display.lcd_clear()
-        self.display.lcd_display_string(short_label, 1)
-        self.display.lcd_display_string("TERDETEKSI", 2)
-        self.display.lcd_clear()
-        self.display.lcd_display_string("-MENDEKATI-", 1)
-
         self._move_forward()
         self.state = "MOVING"
         self._move_start = time.perf_counter()
@@ -147,22 +115,15 @@ class WasteSorterController:
         """Check IR sensor while moving; transition to COLLECTING on obstacle."""
         if time.perf_counter() - self._move_start > self.movement_timeout:
             self._stop_motors()
-            self.display.lcd_clear()
-            self.display.lcd_display_string("TIMEOUT", 1)
-            time.sleep(1)
-            self.display.lcd_clear()
             self.state = "IDLE"
             return
 
         if GPIO.input(self.IR_PIN) == GPIO.LOW:
             self._stop_motors()
             self._activate_relay()
-            self.display.lcd_clear()
-            self.display.lcd_display_string("MENGUMPULKAN", 1)
             self.state = "COLLECTING"
             time.sleep(self.collection_time)
             self._deactivate_relay()
-            self.display.lcd_clear()
             self.state = "IDLE"
 
     # ── Motor control ──────────────────────────────────────────────────────
