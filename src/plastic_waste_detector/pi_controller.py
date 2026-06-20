@@ -20,7 +20,7 @@ class WasteSorterController:
     """GPIO motor/relay controller. Receives detections externally via push_detection()."""
 
     IR_PIN = 18
-    RELAY_PIN = 14
+    RELAY_PIN = 27
     IN1 = 8
     IN2 = 7
     IN3 = 16
